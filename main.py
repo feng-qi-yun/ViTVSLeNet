@@ -28,7 +28,7 @@ from utils.plot import plot_all
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EPOCHS = 10                # 3 轮对 ViT 不公平（数据饥渴、需要更多步数收敛），提到 10 轮
 RATIOS = [0.1, 0.5, 1.0]   # 数据量阶梯: 10%, 50%, 100%
-NOISE_STDS = [0.0, 0.5]    # 噪声强度: 0 (无噪声), 0.5 (较强噪声)
+NOISE_STDS = [0.0, 0.33, 0.67]    # 噪声强度: 0 (无噪声) / 中 / 强
 BATCH_SIZE = 256           # 越大 GPU 越忙；越小优化步数越多
 SEED = 42
 

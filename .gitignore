@@ -12,3 +12,15 @@ data/
 
 # 运行产物（results/ 是实验产物，保留；临时日志忽略）
 run_*.log
+
+# 本地 TeX Live（约 670MB，按需自行安装/保留）
+tools/
+
+# LaTeX 编译中间文件
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.bbl
+paper/*.blg
+paper/*.synctex.gz
