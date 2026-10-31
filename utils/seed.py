@@ -2,9 +2,11 @@
 
 用法:
     from utils.seed import set_seed
-    set_seed(42)                # 固定 python / numpy / torch / cuda 随机源
+    set_seed(42)                      # 固定 python / numpy / torch / cuda 随机源
     set_seed(42, deterministic=True)  # 同时对 cuDNN 开启确定性模式（更慢但完全可复现）
 """
+
+from __future__ import annotations
 
 import os
 import random

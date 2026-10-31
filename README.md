@@ -1,22 +1,37 @@
 # ViTVSLeNet
 
-对比 **视觉 Transformer（MiniViT）** 与 **LeNet-5** 在 MNIST 上的表现，考察两个因素：
-训练数据量（10% / 50% / 100%）和测试集加性高斯噪声（σ = 0 / 0.33 / 0.67）。
+**课本模型 + 课本优化到底值多少？** 本文把 Dropout 与 ResNet 元素（残差连接 + BatchNorm）当作变量，
+在固定的训练协议下测量它们在准确率、噪声鲁棒性与训练代价上的边际收益。
+
+变体矩阵（6 个）：
+
+| 变体 | Dropout | 残差连接 | BatchNorm | 参数量 |
+|---|---|---|---|---|
+| LeNet | -- | -- | -- | 44,426 |
+| LeNet+Dropout | 0.3 | -- | -- | 44,426 |
+| LeNet+ResNet | -- | 2 个 | 6 处 | 49,792 |
+| ResLeNet | 0.3 | 2 个 | 6 处 | 49,792 |
+| MiniViT | -- | -- | -- | 72,202 |
+| MiniViT+Dropout | 0.1 | -- | -- | 72,202 |
+
+实验条件：MNIST，训练数据比例 10% / 50% / 100%，测试集加性高斯噪声 σ = 0 / 0.33 / 0.67，
+Adam（lr 1e-3）、batch 256、30 轮、固定种子 42 → 共 3×3×6 = **54 组**。
 
 ## 目录结构
 
 ```
 ViTVSLeNet/
-├── main.py              # 实验入口：2 模型 × 3 数据比例 × 3 噪声强度
+├── main.py              # 实验入口：6 变体 × 3 数据比例 × 3 噪声强度
 ├── loader/dataLoader.py # MNIST 加载（GPU 驻留张量 / CPU DataLoader 回退）
 ├── models/
-│   ├── LeNet_5.py       # LeNet-5（含 Dropout）
-│   └── mini_vit.py      # MiniViT（patch 4×4，dim 64，depth 2，heads 4）
+│   ├── LeNet_5.py       # LeNet-5（Dropout 可开关）
+│   ├── res_lenet.py     # ResLeNet：残差块 + BatchNorm + 无偏置卷积（Dropout 可开关）
+│   └── mini_vit.py      # MiniViT（patch 4×4，dim 64，depth 2，heads 4，Dropout 可开关）
 ├── engine/train.py      # 训练/评估引擎（AMP、吞吐统计）
 ├── utils/
 │   ├── seed.py          # 随机种子
 │   ├── metrics.py       # 参数量、准确率、宏 F1、结果 CSV
-│   └── plot.py          # 结果绘图
+│   └── plot.py          # 结果绘图（按模型族出图 + 汇总图）
 ├── results/             # 输出：tables / figures / logs
 └── paper/               # LaTeX 课程报告（NUAA 模板）
 ```
@@ -35,24 +50,42 @@ pip install -r requirements.txt
 python main.py
 ```
 
-配置在 `main.py` 顶部：`EPOCHS`、`RATIOS`、`NOISE_STDS`、`BATCH_SIZE`、`SEED`。
+配置在 `main.py` 顶部：`EPOCHS`、`RATIOS`、`NOISE_STDS`、`BATCH_SIZE`、`SEED` 与 `MODEL_FACTORIES`。
 
 ## 结果
 
 | 输出 | 说明 |
 |---|---|
-| `results/tables/experiment_results.csv` | 18 组记录的准确率 / 宏 F1 / 参数量 / 耗时 |
+| `results/tables/experiment_results.csv` | 54 组记录的准确率 / 宏 F1 / 参数量 / 耗时 |
 | `results/tables/accuracy_summary.csv` | 按配置聚合的准确率汇总表 |
-| `results/figures/accuracy_vs_ratio.png` | 准确率随数据比例变化 |
-| `results/figures/accuracy_vs_noise.png` | 准确率随噪声强度变化 |
-| `results/figures/params_compare.png` | 参数量对比 |
+| `results/figures/accuracy_vs_ratio_lenet.png` | LeNet 家族：准确率随数据比例变化 |
+| `results/figures/accuracy_vs_noise_lenet.png` | LeNet 家族：准确率随噪声强度变化 |
+| `results/figures/accuracy_vs_ratio_vit.png` / `..._noise_vit.png` | ViT 家族的同两幅图 |
+| `results/figures/summary.png` | 干净 vs 强噪声准确率、训练耗时汇总 |
+| `results/figures/params_compare.png` | 各变体参数量 |
 | `results/logs/experiment.log` | 完整运行日志 |
 
-当前结果：100% 数据、无噪声时 LeNet 99.04% / MiniViT 97.48%；σ=0.67 时 LeNet 98.16% / MiniViT 87.38%。
+关键结果（100% 数据，30 轮）：
+
+| 变体 | 训练时间(s) | 干净准确率 | σ=0.67 准确率 | 鲁棒性下降 |
+|---|---|---|---|---|
+| LeNet | 18.26 | 98.78 | 98.17 | 0.61 |
+| LeNet+Dropout | 18.54 | 99.10 | 98.24 | 0.86 |
+| LeNet+ResNet | 27.89 | **99.29** | 96.14 | 3.15 |
+| ResLeNet | 28.97 | 99.06 | 95.73 | 3.33 |
+| MiniViT | 40.26 | 97.26 | 80.90 | 16.36 |
+| MiniViT+Dropout | 41.60 | 98.27 | 85.86 | 12.41 |
+
+要点：
+- **Dropout** 是性价比最高的优化：LeNet 上干净数据平均 +0.31（九配置平均 +0.26）、耗时 +1.5%、零参数；ViT 上收益更大（九配置平均 +2.74，强噪声下最多 +10.07）。
+- **ResNet 元素** 能把干净准确率推到最高（99.29），但代价是 +12% 参数、+53% 时间，且 BatchNorm 用的滑动统计量在加噪输入上失效，强噪声下反而退化 2.0–7.5 个百分点（九配置平均 −1.26）。
+- 两者叠加**没有**额外收益（九配置平均 −1.97）：Dropout 的正则化被 BN 的分布敏感性抵消。
 
 ## 论文
 
-`paper/main.tex` 是基于南航课程报告模板（`NUAAReport.sty`）的完整报告，已编译好 `paper/main.pdf`（12 页）。
+`paper/main.tex` 是基于南航课程报告模板（`NUAAReport.sty`）的完整报告，已编译好 `paper/main.pdf`（13 页）。
+报告结构：引言（RQ1 准确率 / RQ2 鲁棒性 / RQ3 代价）→ 相关工作 → 方法（模型、三者优化元件的公式、变体矩阵、训练协议）→
+结果（Dropout、ResNet 元素、组合、ViT+Dropout、代价核算）→ 讨论（BN 协变量偏移、Dropout 与 BN 的相互作用、实践建议）→ 结论与局限。
 
 仓库内附带了一份 TeX Live 2026（装在 `tools/texlive`，约 670 MB，不需要管理员权限，已装 ctex/gbt7714/tcolorbox 等宏包）。在 `paper/` 下直接编译：
 

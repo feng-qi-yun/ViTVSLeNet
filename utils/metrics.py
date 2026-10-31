@@ -12,11 +12,21 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable, Sequence
+from pathlib import Path
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 import torch.nn as nn
+
+#: 指标名 -> 数值（acc/loss/macro_f1 等）
+Metrics = dict[str, float]
+
+#: 一条实验记录，如 {"Noise_Std": 0.0, "Model": "LeNet", "Accuracy": 99.04, ...}
+Record = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -25,65 +35,69 @@ import torch.nn as nn
 
 def count_params(model: nn.Module) -> tuple[float, float]:
     """返回 (总参数量_M, 可训练参数量_M)。"""
-    total = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total: int = sum(p.numel() for p in model.parameters())
+    trainable: int = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total / 1e6, trainable / 1e6
 
 
-def classification_metrics(preds, targets, num_classes: int | None = None) -> dict:
+def classification_metrics(preds: npt.ArrayLike,
+                           targets: npt.ArrayLike,
+                           num_classes: int | None = None) -> Metrics:
     """由预测数组与标签数组计算 准确率(%) 和宏平均 F1。
 
     纯 numpy 实现，避免额外引入 sklearn 依赖。
     """
-    preds = np.asarray(preds)
-    targets = np.asarray(targets)
-    if num_classes is None:
-        num_classes = int(max(targets.max(), preds.max())) + 1
+    pred: np.ndarray = np.asarray(preds)
+    truth: np.ndarray = np.asarray(targets)
+    n_classes: int = num_classes if num_classes is not None else int(max(truth.max(), pred.max())) + 1
 
-    acc = 100.0 * float((preds == targets).mean())
+    acc: float = 100.0 * float((pred == truth).mean())
 
-    f1s = []
-    for c in range(num_classes):
-        tp = np.sum((preds == c) & (targets == c))
-        fp = np.sum((preds == c) & (targets != c))
-        fn = np.sum((preds != c) & (targets == c))
-        precision = tp / (tp + fp) if (tp + fp) else 0.0
-        recall = tp / (tp + fn) if (tp + fn) else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    f1s: list[float] = []
+    for c in range(n_classes):
+        tp: int = int(np.sum((pred == c) & (truth == c)))
+        fp: int = int(np.sum((pred == c) & (truth != c)))
+        fn: int = int(np.sum((pred != c) & (truth == c)))
+        precision: float = tp / (tp + fp) if (tp + fp) else 0.0
+        recall: float = tp / (tp + fn) if (tp + fn) else 0.0
+        f1: float = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
         f1s.append(f1)
 
     return {"acc": acc, "macro_f1": float(np.mean(f1s))}
 
 
 @torch.no_grad()
-def evaluate(model: nn.Module, data_loader, device: str, criterion: nn.Module | None = None, amp_enabled: bool = False) -> dict:
+def evaluate(model: nn.Module,
+             data_loader: Iterable[tuple[torch.Tensor, torch.Tensor]],
+             device: str | torch.device,
+             criterion: nn.Module | None = None,
+             amp_enabled: bool = False) -> Metrics:
     """在 data_loader 上评估模型。
 
     返回 {"acc": 准确率(%), "loss": 平均交叉熵损失, "macro_f1": 宏平均F1}。
     """
     model.eval()
-    if criterion is None:
-        criterion = nn.CrossEntropyLoss()
+    loss_fn: nn.Module = criterion if criterion is not None else nn.CrossEntropyLoss()
 
-    is_cuda = torch.device(device).type == "cuda"
+    is_cuda: bool = torch.device(device).type == "cuda"
     # 预测/标签先留在设备上累积，最后只做一次 .cpu()，避免逐 batch 同步
     all_preds: list[torch.Tensor] = []
     all_targets: list[torch.Tensor] = []
-    total_loss = torch.zeros((), device=device)
-    total_samples = 0
+    total_loss: torch.Tensor = torch.zeros((), device=device)
+    total_samples: int = 0
 
     for data, target in data_loader:
         data = data.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
         with torch.amp.autocast(device_type="cuda" if is_cuda else "cpu", enabled=amp_enabled):
-            output = model(data)
-            loss = criterion(output, target)
+            output: torch.Tensor = model(data)
+            loss: torch.Tensor = loss_fn(output, target)
         total_loss += loss.detach() * target.size(0)
         total_samples += target.size(0)
         all_preds.append(output.argmax(dim=1))
         all_targets.append(target)
 
-    metrics = classification_metrics(
+    metrics: Metrics = classification_metrics(
         torch.cat(all_preds).cpu().numpy(),
         torch.cat(all_targets).cpu().numpy(),
     )
@@ -95,17 +109,18 @@ def evaluate(model: nn.Module, data_loader, device: str, criterion: nn.Module | 
 # 结果持久化（统一写到 results/ 下由调用方指定）
 # ---------------------------------------------------------------------------
 
-def save_results(records: list[dict], path: str) -> pd.DataFrame:
+def save_results(records: Sequence[Record], path: str | Path) -> pd.DataFrame:
     """把实验记录列表保存为 CSV，并返回 DataFrame。"""
-    df = pd.DataFrame(records)
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    df.to_csv(path, index=False)
+    df: pd.DataFrame = pd.DataFrame(records)
+    csv_path: str = os.fspath(path)
+    os.makedirs(os.path.dirname(os.path.abspath(csv_path)), exist_ok=True)
+    df.to_csv(csv_path, index=False)
     return df
 
 
 def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     """按 (噪声强度, 数据比例) 聚合，行=配置、列=模型 的准确率汇总表。"""
-    summary = df.pivot_table(
+    summary: pd.DataFrame = df.pivot_table(
         index=["Noise_Std", "Data_Ratio"],
         columns="Model",
         values="Accuracy",

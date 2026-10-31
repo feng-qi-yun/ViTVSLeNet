@@ -11,27 +11,56 @@ GPU 利用率的核心思路：MNIST 数据量很小（60k×1×28×28≈47MB uin
 测试集高斯噪声作用在“归一化后的特征空间”，noise_std=0.5 才是真正意义上的较强噪声。
 """
 
-import torch
-from torchvision import datasets
-from torch.utils.data import DataLoader, TensorDataset
+from __future__ import annotations
 
-MNIST_MEAN, MNIST_STD = 0.1307, 0.3081
+from collections.abc import Iterator, Sized
+from typing import Protocol
+
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+from torchvision import datasets
+
+#: 一个 batch 的类型：(图像张量, 标签张量)
+Batch = tuple[torch.Tensor, torch.Tensor]
+
+#: MNIST 的像素均值与标准差（与 transforms.Normalize 保持一致）
+MNIST_MEAN: float = 0.1307
+MNIST_STD: float = 0.3081
+
+
+class BatchLoader(Protocol):
+    """批迭代器协议：engine 只关心“能迭代出 batch”和“能拿到样本数”。"""
+
+    dataset: Sized
+
+    def __iter__(self) -> Iterator[Batch]: ...
+
+    def __len__(self) -> int: ...
 
 
 class _TensorSubset:
     """轻量容器，只用于让 engine 能通过 len(loader.dataset) 拿到样本数。"""
 
-    def __init__(self, x: torch.Tensor, y: torch.Tensor):
+    data: torch.Tensor
+    targets: torch.Tensor
+
+    def __init__(self, x: torch.Tensor, y: torch.Tensor) -> None:
         self.data, self.targets = x, y
 
     def __len__(self) -> int:
-        return self.data.shape[0]
+        return int(self.data.shape[0])
 
 
 class GpuBatchLoader:
     """显存驻留张量的批迭代器：数据已在 device 上，迭代时只做切片。"""
 
-    def __init__(self, x: torch.Tensor, y: torch.Tensor, batch_size: int, shuffle: bool = False):
+    x: torch.Tensor
+    y: torch.Tensor
+    batch_size: int
+    shuffle: bool
+    dataset: _TensorSubset
+
+    def __init__(self, x: torch.Tensor, y: torch.Tensor, batch_size: int, shuffle: bool = False) -> None:
         self.x, self.y = x, y
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -40,25 +69,28 @@ class GpuBatchLoader:
     def __len__(self) -> int:
         return (len(self.dataset) + self.batch_size - 1) // self.batch_size
 
-    def __iter__(self):
-        n = len(self.dataset)
-        idx = torch.randperm(n, device=self.x.device) if self.shuffle else torch.arange(n, device=self.x.device)
+    def __iter__(self) -> Iterator[Batch]:
+        n: int = len(self.dataset)
+        idx: torch.Tensor = (
+            torch.randperm(n, device=self.x.device) if self.shuffle
+            else torch.arange(n, device=self.x.device)
+        )
         for start in range(0, n, self.batch_size):
-            sel = idx[start:start + self.batch_size]
+            sel: torch.Tensor = idx[start:start + self.batch_size]
             yield self.x[sel], self.y[sel]
 
 
-def _load_mnist_split(train: bool, device: torch.device):
+def _load_mnist_split(train: bool, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
     """读取 MNIST 并按 ToTensor+Normalize 的等价方式一次性归一化到指定设备。"""
     raw = datasets.MNIST(root="./data", train=train, download=True)
-    x = raw.data.to(device=device, dtype=torch.float32).div_(255.0).sub_(MNIST_MEAN).div_(MNIST_STD)
+    x: torch.Tensor = raw.data.to(device=device, dtype=torch.float32).div_(255.0).sub_(MNIST_MEAN).div_(MNIST_STD)
     x = x.unsqueeze_(1).contiguous()  # [N, 28, 28] -> [N, 1, 28, 28]
-    y = raw.targets.to(device=device, dtype=torch.long)
+    y: torch.Tensor = raw.targets.to(device=device, dtype=torch.long)
     return x, y
 
 
 def dataLoader(ratio: float = 1.0, noise_std: float = 0.0, batch_size: int = 256,
-               device: str | None = None):
+               device: str | torch.device | None = None) -> tuple[BatchLoader, BatchLoader]:
     """返回 (train_loader, test_loader)。
 
     Parameters
@@ -69,18 +101,22 @@ def dataLoader(ratio: float = 1.0, noise_std: float = 0.0, batch_size: int = 256
         测试集高斯噪声标准差（作用在归一化后的图像上，0 表示不加噪声）。
     batch_size : int
         批大小。
-    device : str | None
+    device : str | torch.device | None
         数据放置设备；None 且 CUDA 可用时自动驻留显存，否则留在 CPU。
     """
-    use_gpu = device is not None and torch.cuda.is_available() and torch.device(device).type == "cuda"
-    dev = torch.device(device) if use_gpu else torch.device("cpu")
+    use_gpu: bool = (
+        device is not None
+        and torch.cuda.is_available()
+        and torch.device(device).type == "cuda"
+    )
+    dev: torch.device = torch.device(device) if use_gpu else torch.device("cpu")
 
     x_train, y_train = _load_mnist_split(True, dev)
     x_test, y_test = _load_mnist_split(False, dev)
 
     if ratio < 1.0:
-        num_train = int(len(x_train) * ratio)
-        indices = torch.randperm(len(x_train), device=dev)[:num_train]
+        num_train: int = int(len(x_train) * ratio)
+        indices: torch.Tensor = torch.randperm(len(x_train), device=dev)[:num_train]
         x_train, y_train = x_train[indices], y_train[indices]
 
     # 噪声加在归一化后的特征空间（只在测试集上）
@@ -94,6 +130,6 @@ def dataLoader(ratio: float = 1.0, noise_std: float = 0.0, batch_size: int = 256
         )
 
     # CPU 回退：普通 DataLoader（张量已归一化，无需再逐样本做 transform）
-    train_loader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(TensorDataset(x_test, y_test), batch_size=batch_size, shuffle=False)
+    train_loader: DataLoader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True)
+    test_loader: DataLoader = DataLoader(TensorDataset(x_test, y_test), batch_size=batch_size, shuffle=False)
     return train_loader, test_loader
