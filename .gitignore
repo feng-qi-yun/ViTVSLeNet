@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+ipython_checkpoint/
+
+# 虚拟环境
+.venv/
+
+# 数据与缓存
+data/
+.matplotlib/
+
+# 运行产物（results/ 是实验产物，保留；临时日志忽略）
+run_*.log
