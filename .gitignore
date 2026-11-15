@@ -24,3 +24,5 @@ paper/*.toc
 paper/*.bbl
 paper/*.blg
 paper/*.synctex.gz
+
+tmp.py

@@ -87,8 +87,6 @@ python main.py
 报告结构：引言（RQ1 准确率 / RQ2 鲁棒性 / RQ3 代价）→ 相关工作 → 方法（模型、三者优化元件的公式、变体矩阵、训练协议）→
 结果（Dropout、ResNet 元素、组合、ViT+Dropout、代价核算）→ 讨论（BN 协变量偏移、Dropout 与 BN 的相互作用、实践建议）→ 结论与局限。
 
-编译论文需要系统里装有 XeLaTeX 与 BibTeX（不再依赖仓库内的 `tools/`）。仓库提供三套脚本 + 一个跨平台自动选择入口：
-
 | 脚本 | 平台 | 说明 |
 |---|---|---|
 | `paper/build.py` | 全平台 | **推荐入口**，自动检测操作系统并调用对应脚本 |
@@ -100,20 +98,6 @@ python main.py
 ```bash
 cd paper
 python build.py
-```
-
-也可以直接调用对应平台脚本：
-
-```powershell
-# Windows (PowerShell)
-cd paper
-.\build.ps1
-```
-
-```bash
-# Linux / macOS
-cd paper
-./build.sh
 ```
 
 **前置依赖**：任选其一安装，确保 `xelatex`、`bibtex` 在 `PATH` 中，并装齐 `ctex`、`gbt7714`、`tcolorbox`、`fontawesome`、`pythonhighlight`、`subfigure`、`titlesec` 等宏包。
