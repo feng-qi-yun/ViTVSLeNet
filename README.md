@@ -87,17 +87,57 @@ python main.py
 报告结构：引言（RQ1 准确率 / RQ2 鲁棒性 / RQ3 代价）→ 相关工作 → 方法（模型、三者优化元件的公式、变体矩阵、训练协议）→
 结果（Dropout、ResNet 元素、组合、ViT+Dropout、代价核算）→ 讨论（BN 协变量偏移、Dropout 与 BN 的相互作用、实践建议）→ 结论与局限。
 
-仓库内附带了一份 TeX Live 2026（装在 `tools/texlive`，约 670 MB，不需要管理员权限，已装 ctex/gbt7714/tcolorbox 等宏包）。在 `paper/` 下直接编译：
+编译论文需要系统里装有 XeLaTeX 与 BibTeX（不再依赖仓库内的 `tools/`）。仓库提供三套脚本 + 一个跨平台自动选择入口：
 
-```powershell
+| 脚本 | 平台 | 说明 |
+|---|---|---|
+| `paper/build.py` | 全平台 | **推荐入口**，自动检测操作系统并调用对应脚本 |
+| `paper/build.ps1` | Windows | PowerShell |
+| `paper/build.sh` | Linux / macOS | bash，两个平台共用 |
+
+**一键编译**（Windows / Linux / macOS 通用，需先装好下面的前置依赖）：
+
+```bash
 cd paper
-.\build.ps1        # xelatex -> bibtex -> xelatex x2，输出 main.pdf
+python build.py
 ```
 
-手动编译则先把 `tools\texlive\2026\bin\windows` 加入 `PATH`，再执行：
+也可以直接调用对应平台脚本：
+
+```powershell
+# Windows (PowerShell)
+cd paper
+.\build.ps1
+```
+
+```bash
+# Linux / macOS
+cd paper
+./build.sh
+```
+
+**前置依赖**：任选其一安装，确保 `xelatex`、`bibtex` 在 `PATH` 中，并装齐 `ctex`、`gbt7714`、`tcolorbox`、`fontawesome`、`pythonhighlight`、`subfigure`、`titlesec` 等宏包。
+
+- **Windows**：安装 [MiKTeX](https://miktex.org/)（或 TeX Live），首次编译会自动补装缺失宏包。
+- **macOS**：安装 [MacTeX](https://tug.org/mactex/)。
+- **Linux（Debian/Ubuntu）**：
+  ```bash
+  sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra \
+      texlive-bibtex-extra fonts-noto-cjk
+  # 若仍缺个别宏包，可改装全家桶（约 5 GB）：
+  # sudo apt install texlive-full
+  ```
+
+> **字体注意**：`main.tex` 第 13 行用 `\setmainfont{Times New Roman}` 指定英文字体，该字体是微软版权字体，Linux/macOS 默认没有，会导致 `xelatex` 报 “font not found”。两种解法二选一：
+> 1. 安装该字体：Ubuntu 执行 `sudo apt install ttf-mscorefonts-installer`（macOS 手动安装 Times New Roman 字体文件）；
+> 2. 把 `main.tex` 里的 `Times New Roman` 改成系统自带的开源衬线字体（如 `Liberation Serif`、`TeX Gyre Termes`）。
+>
+> （第 16 行的 `SimHei` 只是定义了一个未被使用的 `\zhhei` 字体族，不会触发加载，可忽略。）
+
+**手动编译**（等价于上面脚本做的事）：
 
 ```bash
 xelatex main.tex && bibtex main && xelatex main.tex && xelatex main.tex
 ```
 
-若把 `tools/` 删掉（它已在 `.gitignore` 中），可自行安装 TeX Live / MiKTeX 并装齐 `ctex`、`gbt7714`、`tcolorbox`、`fontawesome`、`pythonhighlight`、`subfigure`、`titlesec` 等宏包，或直接把 `paper/` 上传到 Overleaf 选 XeLaTeX 编译。
+也可以直接把 `paper/` 上传到 Overleaf，选 XeLaTeX 编译。
